@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage
 from langgraph.prebuilt import ToolNode
 from dental_agent.config.settings import GROQ_API_KEY, MODEL_NAME, TEMPERATURE
 from dental_agent.models.state import AppointmentState
+from dental_agent.tools.db_reader import check_slot_availability_db
 from dental_agent.tools.csv_reader import (
     get_available_slots,
     get_patient_appointments,
@@ -16,30 +17,22 @@ INFO_TOOLS = [
     get_available_slots,
     get_patient_appointments,
     check_slot_availability,
+    check_slot_availability_db,
     list_doctors_by_specialization,
 ]
 info_tool_node = ToolNode(tools=INFO_TOOLS)
 
-INFO_SYSTEM = """You are the Information Agent for a dental appointment system.
+INFO_SYSTEM = """You are the Information Agent. 
+Your role is to fetch data about doctors and existing appointments.
 
-Your role is to answer queries about doctor availability, schedules, and appointment status.
+## Rules
+1. Use 'check_slot_availability_db' to verify if a specific time is open.
+2. Use 'get_patient_appointments' (or your specific tool name) to see what a patient has booked.
+3. NEVER guess. If the tool returns an error, tell the user exactly what happened.
 
-## Available Tools
-- get_available_slots(specialization, doctor_name, date_filter) — find open slots
-- get_patient_appointments(patient_id) — look up a patient's bookings
-- check_slot_availability(doctor_name, date_slot) — verify a specific slot
-- list_doctors_by_specialization(specialization) — list doctors in a specialty
-
-## Guidelines
-1. Use tools to fetch real data. Never invent slot times or doctor names.
-2. If the user has not provided enough parameters, ask a focused clarifying question.
-3. Present results in a clear, friendly, numbered list.
-4. Valid specializations: general_dentist, oral_surgeon, orthodontist, cosmetic_dentist, prosthodontist, pediatric_dentist, emergency_dentist.
-5. After answering, ask if the user needs anything else.
-
-## Date Format
-All dates follow M/D/YYYY H:MM format (e.g., 5/10/2026 9:00).
+If the user asks for available slots, call the tool first, then format the list for them.
 """
+
 
 INFO_PROMPT = ChatPromptTemplate.from_messages([
     ("system", INFO_SYSTEM),

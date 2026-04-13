@@ -53,7 +53,8 @@ def run():
             for event_type, data in dental_graph.stream(
                 {"messages": history},# State -> {"messages" : [HumanMessage(content="..."), AIMessage(content="..."), ...]}
                 stream_mode=["messages", "values"],
-                config={"recursion_limit": 50},
+                config = {"configurable": {"thread_id": "user_1"}, "recursion_limit": 50}
+               # config={"recursion_limit": 50},
             ):
                 if event_type == "messages":
                     chunk, meta = data

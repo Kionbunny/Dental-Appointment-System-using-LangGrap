@@ -2,15 +2,29 @@
 # StateGraph -> LangGraph class that defines the structure of our conversation flow, including nodes and edges. used to build the graph
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import AIMessage
-
+from langgraph.checkpoint.postgres import PostgresSaver
 from dental_agent.models.state import AppointmentState
 from dental_agent.agents.supervisor import supervisor_node
 from dental_agent.agents.info_agent import info_agent_node, info_tool_node
 from dental_agent.agents.booking_agent import booking_agent_node, booking_tool_node
 from dental_agent.agents.cancellation_agent import cancellation_agent_node, cancellation_tool_node
 from dental_agent.agents.rescheduling_agent import rescheduling_agent_node, rescheduling_tool_node
+# from langgraph.prebuilt import ToolNode
 
 
+
+# connection_string = "postgresql://admin:password123@localhost:5432/dental_clinic"
+connection_string = "postgresql://admin:password123@db:5432/dental_clinic"
+_context = PostgresSaver.from_conn_string(connection_string)
+memory = _context.__enter__()  # Manually enter the context to get the memory instance for checkpointing
+memory.setup()  # Ensure the database tables are created and ready for use
+
+
+
+    # 2. Open the connection and name it 'memory'
+    # This makes 'memory' a global variable accessible by build_graph()
+    
+   
 # routing function for the supervisor node — reads next_agent from state and returns the corresponding node name
 def route_from_supervisor(state: AppointmentState) -> str:
     """Read next_agent from state and return the corresponding node name."""
@@ -57,6 +71,13 @@ def _should_continue(state: AppointmentState) -> str:
     if messages and isinstance(messages[-1], AIMessage) and messages[-1].tool_calls:
         return "tools"
     return "end"
+ 
+
+  # This 'memory' variable is what we will pass to the compiler
+
+
+   # Ensure tables are created
+
 
 
 def build_graph():
@@ -121,8 +142,15 @@ def build_graph():
         {"tools": "rescheduling_tools", "end": END},
     )
     graph.add_edge("rescheduling_tools", "rescheduling_agent")
+  
+    
+    # Compile with checkpointer and the HITL Interrupt
+    return graph.compile(
+        checkpointer=memory,
+       # interrupt_before=["booking_tools"] # The "Breakpoint"
+    )
 
-    return graph.compile()
+
 
 
 dental_graph = build_graph()

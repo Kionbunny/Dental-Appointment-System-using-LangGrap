@@ -1,4 +1,28 @@
 venv/
 .env
+env/
+.venv/
 __pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# IDE/editor folders
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Jupyter/IPython
+.ipynb_checkpoints/
+
+# Database files
+*.db
+*.sqlite3
+
+# Docker and logs
+*.pid
+*.log

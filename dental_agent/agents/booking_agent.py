@@ -3,55 +3,69 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.prebuilt import ToolNode
 from dental_agent.config.settings import GROQ_API_KEY, MODEL_NAME, TEMPERATURE
 from dental_agent.models.state import AppointmentState
-from dental_agent.tools.csv_reader import get_available_slots, check_slot_availability , list_doctors_by_specialization
-from dental_agent.tools.csv_writer import book_appointment
+# from dental_agent.tools.csv_reader import get_available_slots, check_slot_availability , list_doctors_by_specialization
+# from dental_agent.tools.csv_writer import book_appointment
+# Add the new DB imports:
+from dental_agent.tools.db_reader import check_slot_availability_db
+from dental_agent.tools.db_writer import update_appointment_status_db
 from dental_agent.utils import sanitize_messages
-
-
 #Defines what tools LLM can use 
-BOOKING_TOOLS = [get_available_slots, check_slot_availability, book_appointment]
+BOOKING_TOOLS = [check_slot_availability_db, update_appointment_status_db]
+
+
 booking_tool_node = ToolNode(tools=BOOKING_TOOLS)
 
 # system instructions for the LLM 
 BOOKING_SYSTEM = """You are the Booking Agent for a dental appointment management system.
-
 Your ONLY job is to book NEW appointments for patients.
 
 ## STRICT TOOL USAGE RULES
 - ONLY use these tools:
-  - check_slot_availability
-  - get_available_slots
-  - book_appointment
-
+  - check_slot_availability_db
+  - update_appointment_status_db
 - NEVER use any other tool.
-- NEVER call get_patient_appointments.
-- NEVER switch task (no history lookup, no info retrieval).
+- NEVER switch task.
 
+## TOOL RESPONSE UNDERSTANDING (VERY IMPORTANT)
+- 'check_slot_availability_db' returns:
+  - found = True  → slot is available
+  - found = False → slot is NOT available
+
+## IMPORTANT RULE
+- If slot is NOT available (found = False):
+  - DO NOT call the tool again
+  - Inform the user clearly
+  - Ask for a different date/time
+## TOOL INPUT FORMAT (VERY IMPORTANT)
+When calling tools, ALWAYS use these exact parameter names:
+
+- check_slot_availability_db:
+    - doctor_name
+    - date_slot
+
+- update_appointment_status_db:
+    - doctor_name
+    - date_slot
+    - patient_id
+
+DO NOT use 'date' or any other key. ONLY use 'date_slot'.
 ## Workflow
-1. Collect REQUIRED information (ask if missing):
-   - patient_id       : numeric patient ID (e.g., 1000082)
-   - specialization   : the type of dentist needed
-   - doctor_name      : specific doctor (or help user choose from available)
-   - date_slot        : desired date/time in M/D/YYYY H:MM format
+1. Collect:
+   - patient_id
+   - doctor_name
+   - date_slot
 
-2. Call check_slot_availability first to confirm the slot is free.
-   - If the slot is taken, call get_available_slots to show alternatives.
+2. Call 'check_slot_availability_db'
 
-3. Once confirmed available, call book_appointment with ALL parameters.
+3. If available (found = True):
+   → Call 'update_appointment_status_db'
 
-4. After booking, confirm the booking clearly.
+4. If NOT available (found = False):
+   → Inform user and ask for new slot
 
 ## Rules
-- NEVER book without checking availability first.
-- Ask for ONLY ONE missing field at a time.
-- DO NOT call tools unless ALL required fields are collected.
-- DO NOT guess missing values.
-
-
-"STRICT RULE: Always confirm the doctor name and slot from the very last user message before calling book_appointment. Do not use data from previous booking attempts unless explicitly told to."
-
-## Date Format
-M/D/YYYY H:MM (e.g., 5/10/2026 9:00)
+- DO NOT repeat tool calls unnecessarily
+- Ask only one missing field at a time
 """
 
 
@@ -82,17 +96,25 @@ def booking_agent_node(state: AppointmentState) -> dict:
     # clean history → inject into {messages} placeholder → LLM processes → returns AIMessage
     print(f"DEBUG: Last message seen by agent: {state['messages'][-1].content}")
     response = chain.invoke({"messages": sanitize_messages(state["messages"])})
+
+
+
+    # DEBUG: See what the LLM actually decided to do
+    if response.tool_calls:
+        print(f"DEBUG: LLM is calling tools: {[t['name'] for t in response.tool_calls]}")
     # checks if the LLM's response includes any tool calls
     # non-empty tool_calls means LLM has gathered enough info and is ready to book
     # llm_wants_to_book = len(response.tool_calls) > 0
-    llm_wants_to_book = any(
-    tool["name"] == "book_appointment"
-    for tool in response.tool_calls
-    )
+    llm_wants_to_book = False
+    if response.tool_calls:
+        llm_wants_to_book = any(
+            tool["name"] == "update_appointment_status_db"
+            for tool in response.tool_calls
+        )
     if llm_wants_to_book and not state.get("is_approved"):
         # Show admin exactly what's about to be booked
-        args = next(t for t in response.tool_calls if t["name"] == "book_appointment")["args"]
-        print(f"\n⚠️  Booking approval required:")
+        args = next(t for t in response.tool_calls if t["name"] == "update_appointment_status_db")["args"]
+        print(f"\n  Booking approval required:")
         print(f"   Patient : {args.get('patient_id')}")
         print(f"   Doctor  : {args.get('doctor_name')}")
         print(f"   Slot    : {args.get('date_slot')}")
@@ -107,9 +129,9 @@ def booking_agent_node(state: AppointmentState) -> dict:
             }
 
 
-        # Approved — let booking_tools execute book_appointment
+        # Approved — let booking_tools execute update_appointment_status_db
         return {
-            "messages": [response],
+            "messages": state["messages"], # [response] # Keep conversation history intact for tool execution
             "is_approved": True,
             "final_response": None,
         }
